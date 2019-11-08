@@ -1,0 +1,195 @@
+/****************************************************************************
+ * configs/rv32-vega-lite/scripts/ld.script
+ *
+ *   Copyright (C) 2018 Gregory Nutt. All rights reserved.
+ *   Author: zhoukejun <zhoukejun@outlook.com>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ * 3. Neither the name NuttX nor the names of its contributors may be
+ *    used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ ****************************************************************************/
+
+/* Not needed, but we need separate linker scripts anyway */
+
+OUTPUT_ARCH("riscv")
+
+HEAP_SIZE  = DEFINED(__heap_size__)  ? __heap_size__  : 0x1FFF;
+STACK_SIZE = DEFINED(__stack_size__) ? __stack_size__ : 0x0400;
+IDLE_STACK_SIZE = DEFINED(__idle_stack_size__) ? __idle_stack_size__ : 0x0400;
+
+MEMORY
+{
+  m_vector              (RX)  : ORIGIN = 0x000FFF00, LENGTH = 0x00000100
+  m_text                (RX)  : ORIGIN = 0x00000000, LENGTH = 0x000FFF00
+  m_data                (RW)  : ORIGIN = 0x20000000, LENGTH = 0x00030000 - 0x1800
+  rpmsg_sh_mem          (RW)  : ORIGIN = 0x2002E800, LENGTH = 0x1800
+  m_usb_sram            (RW)  : ORIGIN = 0x48010000, LENGTH = 0x00000800
+}
+
+/* We have to align each sector to word boundaries as our current s19->slm
+ * conversion scripts are not able to handle non-word aligned sections.
+ */
+
+SECTIONS
+{
+    /* NOINIT section for rpmsg_sh_mem */
+    .noinit_rpmsg_sh_mem (NOLOAD) : ALIGN(4)
+    {
+       *(.noinit.$rpmsg_sh_mem*)
+       . = ALIGN(4) ;
+    } > rpmsg_sh_mem
+
+    .vectors : ALIGN(4)
+    {
+      __VECTOR_TABLE = .;
+      KEEP(*(.vectors))
+    } > m_vector
+
+    /* The program code and other data goes into internal flash */
+    .text :
+    {
+      . = ALIGN(4);
+      KEEP(*(.startup))
+      . = ALIGN(4);
+      *(.text)                 /* .text sections (code) */
+      *(.text*)                /* .text* sections (code) */
+      *(.rodata)               /* .rodata sections (constants, strings, etc.) */
+      *(.rodata*)              /* .rodata* sections (constants, strings, etc.) */
+      *(.srodata .srodata.*)
+      *(.eh_frame)
+      *(.init)
+      *(.fini)
+    } > m_text
+
+    /*--------------------------------------------------------------------*/
+    /* Global constructor/destructor segement                             */
+    /*--------------------------------------------------------------------*/
+
+    .preinit_array :
+    {
+      PROVIDE_HIDDEN (__preinit_array_start = .);
+      KEEP (*(.preinit_array*))
+      PROVIDE_HIDDEN (__preinit_array_end = .);
+    } > m_text
+
+    .init_array :
+    {
+      PROVIDE_HIDDEN (__init_array_start = .);
+      KEEP (*(SORT(.init_array.*)))
+      KEEP (*(.init_array*))
+      PROVIDE_HIDDEN (__init_array_end = .);
+    } > m_text
+
+    .fini_array :
+    {
+      PROVIDE_HIDDEN (__fini_array_start = .);
+      KEEP (*(SORT(.fini_array.*)))
+      KEEP (*(.fini_array*))
+      PROVIDE_HIDDEN (__fini_array_end = .);
+    } > m_text
+
+
+    __etext = .;    /* define a global symbol at end of code */
+    __global_pointer = .;    /* define a global symbol at end of code */
+    __DATA_ROM = .; /* Symbol is used by startup for data initialization */
+
+
+    .data : AT(__DATA_ROM)
+    {
+        . = ALIGN(4);
+        __DATA_RAM = .;
+        __data_start__ = .;      /* create a global symbol at data start */
+        *(.data);
+        *(.data.*)
+        *(.sdata .sdata.*)
+        *(.heapsram*)            /* This is only for the pulpino official test code. */
+    __noncachedata_start__ = .;   /* create a global symbol at ncache data start */
+	*(NonCacheable)
+    __noncachedata_end__ = .;     /* define a global symbol at ncache data end */
+        KEEP(*(.jcr*))
+        . = ALIGN(4);
+        __data_end__ = .;        /* define a global symbol at data end */
+    } > m_data 
+
+  __DATA_END = __DATA_ROM + (__data_end__ - __data_start__);
+  text_end = ORIGIN(m_text) + LENGTH(m_text);
+  ASSERT(__DATA_END <= text_end, "region m_text overflowed with text and data")
+    _edata = .;
+
+    .bss :
+    {
+        . = ALIGN(4);
+        _sbss = .;
+        __bss_start__ = .;
+        *(.bss)
+        *(.bss.*)
+        *(.sbss)
+        *(.sbss.*)
+        *(COMMON)
+        . = ALIGN(4);
+        __bss_end__ = .;
+        _ebss = .;
+    } > m_data
+
+  /* End of uninitalized data segement */
+  _end = .;
+  PROVIDE(end = .);
+
+    .heap :
+    {
+      . = ALIGN(8);
+      _heap_start = .;
+      . += HEAP_SIZE;
+      _heap_end = .;
+    } > m_data
+
+    .stack :
+    {
+      . = ALIGN(8);
+      _stack_end = .;
+      . += STACK_SIZE;
+      _stack_start = .;
+    } > m_data
+
+    .idle_stack :
+    {
+      . = ALIGN(8);
+      _idle_stack_end = .;
+/*      . += IDLE_STACK_SIZE; */
+      _idle_stack_start = .;
+    } > m_data
+
+    .stab  0 (NOLOAD) :
+    {
+        [ .stab ]
+    }
+
+    .stabstr  0 (NOLOAD) :
+    {
+        [ .stabstr ]
+    }
+}

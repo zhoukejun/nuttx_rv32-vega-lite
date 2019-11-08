@@ -1,0 +1,13 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+comment "RV32M1 chipset: RI5CY core configuration"
+
+config CORE_CLOCK_FREQ
+	int "Core clock frequency"
+	range 48000000 72000000
+	default 48000000 
+	---help---
+		The core clock in Hz. RI5CY core is able to run up to 72MHz.
